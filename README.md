@@ -12,7 +12,7 @@ already understands. It is a stopgap until Grafana supports touch natively.
 
 ## Demo
 
-https://github.com/user-attachments/assets/98d32196-9d88-4e55-ac42-d48d2baf951d
+https://github.com/user-attachments/assets/b7dc5c60-d87b-4652-8a92-5e95a7c17ba5
 
 Long-press for the tooltip, then hold and tap a second finger to select a time
 range and zoom (Android Chrome, Grafana 13.1).
