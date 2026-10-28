@@ -1,0 +1,33 @@
+# Pass-through to Grafana that adds the touch shim to every HTML page.
+# ${GRAFANA_UPSTREAM} is filled in by the nginx image at startup; nginx's own
+# $variables are left alone because they are not set in the environment.
+
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 80;
+
+    location = /grafana-touch.user.js {
+        alias /usr/share/nginx/grafana-touch-shim/grafana-touch.user.js;
+        default_type application/javascript;
+        add_header Cache-Control "no-cache";
+    }
+
+    location / {
+        proxy_pass ${GRAFANA_UPSTREAM};
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # Grafana Live uses websockets.
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+
+        # sub_filter can only edit uncompressed responses.
+        proxy_set_header Accept-Encoding "";
+        sub_filter '</head>' '<script src="/grafana-touch.user.js" defer></script></head>';
+        sub_filter_once on;
+    }
+}

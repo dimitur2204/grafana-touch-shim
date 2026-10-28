@@ -1,0 +1,24 @@
+# Reverse proxy in front of an existing Grafana that adds the touch shim to
+# every page, so it works on any device without a userscript manager.
+# Grafana itself is not changed.
+#
+#   GRAFANA_UPSTREAM=http://192.168.1.10:3000 docker compose up -d
+#   then open http://<this host>:3011
+services:
+  grafana-touch:
+    image: nginx:1.29-alpine
+    restart: unless-stopped
+    ports:
+      - 3011:80
+    environment:
+      # Where Grafana is reachable from inside this container. The default
+      # points at port 3000 on the Docker host.
+      - GRAFANA_UPSTREAM=${GRAFANA_UPSTREAM:-http://host.docker.internal:3000}
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    volumes:
+      # nginx renders templates/*.template into conf.d at startup,
+      # substituting ${GRAFANA_UPSTREAM}.
+      - ./nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
+      # The folder, not the single file, so edits show up without a restart.
+      - ../:/usr/share/nginx/grafana-touch-shim:ro
