@@ -10,6 +10,15 @@ hover for a tooltip nor drag to zoom
 This small script translates touch gestures into the mouse events uPlot
 already understands. It is a stopgap until Grafana supports touch natively.
 
+## Demo
+
+<!-- Video: edit this file on github.com and drag the .mp4 in here (max 10 MB).
+     GitHub replaces it with a https://github.com/user-attachments/assets/... link
+     on its own line, which renders as a player. -->
+
+Long-press for the tooltip, then hold and tap a second finger to select a time
+range and zoom (Android Chrome, Grafana 13.1).
+
 ## Gestures
 
 | Gesture | Result |
