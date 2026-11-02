@@ -23,7 +23,7 @@ range and zoom (Android Chrome, Grafana 13.1).
 |---|---|
 | One-finger swipe | Scrolls the page, as usual |
 | Two-finger pinch | Zooms the page, as usual |
-| Long-press (300 ms), then slide | Crosshair and tooltip follow your finger; the tooltip stays after you lift |
+| Long-press (300 ms), then slide | Crosshair snaps onto the top line at that time, so only your finger's horizontal position matters and it can stay off the data; the tooltip stays after you lift |
 | While holding, tap a second finger anywhere | Marks the start of a time range |
 | Keep sliding the first finger | The selection band follows, as on desktop |
 | Lift the first finger | Zooms to the selection |
@@ -67,10 +67,35 @@ same access rules, on another port.
   Chrome events), which otherwise freezes the selection.
 - After a gesture the browser's own tap→click is suppressed, since Grafana
   pins the tooltip on click.
+- Snapping: the time series panel shows a single cursor dot, on the line
+  nearest the cursor and only within 30 px of it. On every finger move the
+  shim sends a few hidden cursor moves down from the top of the chart, at most
+  28 px apart, until the dot appears; the first dot found is on the top line.
+  It then moves the cursor onto that dot, and checks that uPlot still shows it
+  there (with very dense data the dot's pixel can map to a neighbouring data
+  point).
+- uPlot rounds the dot's position up to whole pixels, so it sits slightly
+  right of and below the data point; the shim shifts it back half a pixel.
+
+On a **stacked** chart the top line is the stack total, so it is always the
+same series whatever the values. Turn stacking off if you want the tooltip to
+follow the series with the biggest value.
 
 Tested with Grafana 13.1 on Android Chrome. It relies on Grafana and uPlot
-internals (the `.u-over` element and their mouse handling), so a Grafana
-update can break it.
+internals (the `.u-over` element, the cursor dot and their mouse handling), so
+a Grafana update can break it.
+
+## Development
+
+```sh
+bun test
+```
+
+[`test/`](test) runs the script against a fake time series panel that mimics
+the uPlot behaviour the shim relies on, and drives it with touch events:
+gestures (tap, swipe, pinch, hover, zoom, cancel) and snapping, including
+randomised stress tests with dense, spiky and bunched-together lines. It does
+not render anything, so check visual changes on a real device.
 
 ## Disclosure
 

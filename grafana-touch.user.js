@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Grafana touch shim
 // @namespace    grafana-touch-shim
-// @version      0.2.1
+// @version      0.3.5
 // @description  Long-press for tooltips and hold-and-tap to zoom on Grafana time series panels.
 // @match        *://*/*
 // @run-at       document-idle
@@ -15,7 +15,8 @@
 //   one-finger swipe               -> untouched, the page scrolls as usual
 //   two fingers at once            -> untouched, the page pinch-zooms as usual
 //   long-press (300 ms), drag      -> mouseenter + mousemove: crosshair/tooltip
-//                                     follows the finger and stays after lifting
+//                                     snaps onto the top line at the finger's
+//                                     time; stays after lifting
 //   while holding, tap a second    -> mousedown at the crosshair: marks the start
 //     finger anywhere                 of a time range
 //   keep dragging the first finger -> mousemove: uPlot draws the selection
@@ -23,7 +24,9 @@
 //   tap the second finger again    -> cancel the selection, back to hover
 //
 // One finger does all the positioning; the second finger is only a button, so
-// its position and jitter never matter.
+// its position and jitter never matter. Because the crosshair snaps onto the
+// line, only the finger's horizontal position matters and it can stay clear of
+// the value it is reading.
 //
 // The same file works as a Tampermonkey/Userscripts userscript and as a
 // <script> injected by a reverse proxy (see proxy/).
@@ -39,11 +42,20 @@
 
   const LONG_PRESS_MS = 300;
   const MOVE_TOLERANCE = 10; // px a finger may drift before the press counts as a scroll
+  // Maximum vertical spacing of the probes that look for the top line. Grafana
+  // shows the cursor dot within 30 px of a line; see hover() for why the
+  // spacing must not exceed that.
+  const PROBE_STEP = 28;
   const TOUCH_EVENTS = ['touchstart', 'touchmove', 'touchend', 'touchcancel'];
 
   // Keep long-press from selecting text or opening the iOS callout on charts.
+  // uPlot rounds the cursor dot's position up (Math.ceil) to whole pixels, so
+  // it always sits 0-1 px right of and below the data point; shift it back by
+  // half a pixel to centre the error. `translate` adds to uPlot's own
+  // `transform` without touching it.
   const style = document.createElement('style');
-  style.textContent = '.u-over{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}';
+  style.textContent = '.u-over{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}' +
+    '.u-cursor-pt{translate:-0.5px -0.5px}';
   document.head.appendChild(style);
 
   // The gesture in progress, or null when no finger is down on a chart.
@@ -89,18 +101,73 @@
     lingering = null;
   }
 
+  // uPlot marks the hovered value with a dot (.u-cursor-pt); hidden dots get
+  // .u-off. Returns the centre of the topmost visible dot, or null if none.
+  function topDot(over) {
+    let best = null;
+    for (const el of over.querySelectorAll('.u-cursor-pt')) {
+      if (el.classList.contains('u-off')) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 && r.height === 0) continue;
+      const dot = { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+      if (best === null || dot.y < best.y) best = dot;
+    }
+    return best;
+  }
+
+  // Snap the crosshair onto the top line at the finger's time. The time series
+  // panel shows a single dot, on the line nearest the cursor and only within
+  // 30 px of it, so probe down from the top of the chart until a dot appears.
+  // With probes at most 30 px apart, the first dot is always on the top line:
+  // the previous probe found nothing, so every line is more than 30 px below
+  // it, i.e. below this probe too, and the line nearest a point above all of
+  // them is the top one. (With wider spacing this probe could land just under
+  // the top line and pick a closer line beneath it.) The probes run
+  // synchronously, so only the final move is drawn.
+  function hover() {
+    const r = g.over.getBoundingClientRect();
+    const n = Math.max(1, Math.ceil(r.height / PROBE_STEP)); // evenly spaced, both edges included
+    let dot = null;
+    for (let i = 0; !dot && i <= n; i++) {
+      fire(g.over, 'mousemove', g.x, r.top + (r.height * i) / n, 0);
+      dot = topDot(g.over);
+    }
+    // No dot means no value at this time (or not a line chart): follow the finger.
+    if (!dot) {
+      settle(g.x, g.y);
+      return;
+    }
+    // First choice: the data point itself, so the crosshair lines up with the
+    // dot on a steep line. But the dot is drawn on whole pixels, and when data
+    // points are closer together than that, its x can hover the neighbouring
+    // point instead; on a spike that one is far away and Grafana shows no dot
+    // or tooltip. So check that uPlot still shows the same dot there.
+    settle(dot.x, dot.y);
+    const shown = topDot(g.over);
+    if (shown && Math.abs(shown.x - dot.x) <= 0.5 && Math.abs(shown.y - dot.y) <= 0.5) return;
+    // Fallback that cannot miss: at the probe's x uPlot hovers the same data
+    // point, and at the dot's own height the cursor is 0 px from the line.
+    settle(g.x, dot.y);
+  }
+
+  function settle(x, y) {
+    g.snapX = x;
+    g.snapY = y;
+    fire(g.over, 'mousemove', x, y, 0);
+  }
+
   function startHover() {
     g.mode = 'hover';
     fire(g.over, 'mouseenter', g.x, g.y, 0);
-    fire(g.over, 'mousemove', g.x, g.y, 0);
+    hover();
   }
 
   // Mark the start of the range at the crosshair. The y of every drag event is
   // pinned to this point so uPlot sees a purely horizontal (time) selection.
   function startSelect() {
     g.mode = 'select';
-    g.markX = g.x;
-    g.markY = g.y;
+    g.markX = g.snapX;
+    g.markY = g.snapY;
     fire(g.over, 'mousedown', g.markX, g.markY, 1);
     buzz();
   }
@@ -111,7 +178,7 @@
     if (g.x !== g.markX) fire(g.over, 'mousemove', g.markX, g.markY, 1);
     fire(g.over, 'mouseup', g.markX, g.markY, 0);
     g.mode = 'hover';
-    fire(g.over, 'mousemove', g.x, g.y, 0);
+    hover();
     buzz();
   }
 
@@ -162,7 +229,7 @@
         if (!t) return; // only the second finger moved: ignore it
         g.x = t.clientX;
         g.y = t.clientY;
-        if (g.mode === 'hover') fire(g.over, 'mousemove', g.x, g.y, 0);
+        if (g.mode === 'hover') hover();
         else fire(g.over, 'mousemove', g.x, g.markY, 1);
       } else if (g.mode === 'done') {
         e.preventDefault();
